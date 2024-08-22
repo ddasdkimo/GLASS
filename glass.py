@@ -19,7 +19,7 @@ import cv2
 import utils
 import glob
 import shutil
-
+import PIL
 LOGGER = logging.getLogger(__name__)
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -275,15 +275,17 @@ class GLASS(torch.nn.Module):
 
             if (i_epoch + 1) % self.eval_epochs == 0:
                 images, scores, segmentations, labels_gt, masks_gt = self.predict(val_data)
-                image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro = self._evaluate(images, scores, segmentations,
-                                                                                         labels_gt, masks_gt, name)
+                image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro, f1 ,recall,precision= self._evaluate(images, scores, segmentations,
+                                                                                         labels_gt, masks_gt, name, path='eval')
 
                 self.logger.logger.add_scalar("i-auroc", image_auroc, i_epoch)
                 self.logger.logger.add_scalar("i-ap", image_ap, i_epoch)
                 self.logger.logger.add_scalar("p-auroc", pixel_auroc, i_epoch)
                 self.logger.logger.add_scalar("p-ap", pixel_ap, i_epoch)
                 self.logger.logger.add_scalar("p-pro", pixel_pro, i_epoch)
-
+                self.logger.logger.add_scalar("f1", f1, i_epoch)
+                self.logger.logger.add_scalar("recall", recall, i_epoch)
+                self.logger.logger.add_scalar("precision", precision, i_epoch)
                 eval_path = './results/eval/' + name + '/'
                 train_path = './results/training/' + name + '/'
                 if best_record is None:
@@ -291,6 +293,8 @@ class GLASS(torch.nn.Module):
                     ckpt_path_best = os.path.join(self.ckpt_dir, "ckpt_best_{}.pth".format(i_epoch))
                     torch.save(state_dict, ckpt_path_best)
                     shutil.rmtree(eval_path, ignore_errors=True)
+                    # 建立 train_path 資料夾
+                    
                     shutil.copytree(train_path, eval_path)
 
                 elif image_auroc + pixel_auroc > best_record[0] + best_record[2]:
@@ -429,7 +433,7 @@ class GLASS(torch.nn.Module):
             pix_fake = torch.concat([fake_scores.detach() * mask_s_gt, gaus_scores.detach()])
             p_true = ((pix_true < self.dsc_margin).sum() - (pix_true == 0).sum()) / ((mask_s_gt == 0).sum() + true_scores.shape[0])
             p_fake = (pix_fake >= self.dsc_margin).sum() / ((mask_s_gt == 1).sum() + gaus_scores.shape[0])
-
+            # self.tester(val_data, name)
             self.logger.logger.add_scalar(f"p_true", p_true, self.logger.g_iter)
             self.logger.logger.add_scalar(f"p_fake", p_fake, self.logger.g_iter)
             self.logger.logger.add_scalar(f"r_t", r_t, self.logger.g_iter)
@@ -469,7 +473,15 @@ class GLASS(torch.nn.Module):
                 break
 
         return pbar_str2, all_p_true_, all_p_fake_
-
+    def loadermodel(self):
+        ckpt_path = glob.glob(self.ckpt_dir + '/ckpt_best*')
+        state_dict = torch.load(ckpt_path[0], map_location=self.device)
+        if 'discriminator' in state_dict:
+            self.discriminator.load_state_dict(state_dict['discriminator'])
+            if "pre_projection" in state_dict:
+                self.pre_projection.load_state_dict(state_dict["pre_projection"])
+        else:
+            self.load_state_dict(state_dict, strict=False)
     def tester(self, test_data, name):
         ckpt_path = glob.glob(self.ckpt_dir + '/ckpt_best*')
         if len(ckpt_path) != 0:
@@ -480,16 +492,18 @@ class GLASS(torch.nn.Module):
                     self.pre_projection.load_state_dict(state_dict["pre_projection"])
             else:
                 self.load_state_dict(state_dict, strict=False)
-
+            
+            # self.predict_image(PIL.Image.open("/dataset/rai/gasket/train/good/2244_13_13.png").convert("RGB"))
             images, scores, segmentations, labels_gt, masks_gt = self.predict(test_data)
-            image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro = self._evaluate(images, scores, segmentations,
+            image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro, f1 ,recall,precision= self._evaluate(images, scores, segmentations,
                                                                                      labels_gt, masks_gt, name, path='eval')
             epoch = int(ckpt_path[0].split('_')[-1].split('.')[0])
         else:
-            image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro, epoch = 0., 0., 0., 0., 0., -1.
+            image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro, epoch, f1,recall,precision= 0., 0., 0., 0., 0., -1.,0.,0.,0.
             LOGGER.info("No ckpt file found!")
+            
 
-        return image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro, epoch
+        return image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro, epoch,f1,recall,precision
 
     def _evaluate(self, images, scores, segmentations, labels_gt, masks_gt, name, path='training'):
         scores = np.squeeze(np.array(scores))
@@ -500,7 +514,9 @@ class GLASS(torch.nn.Module):
         image_scores = metrics.compute_imagewise_retrieval_metrics(norm_scores, labels_gt, path)
         image_auroc = image_scores["auroc"]
         image_ap = image_scores["ap"]
-
+        f1 = image_scores['f1']
+        recall = image_scores['recall']
+        precision = image_scores['precision']
         if len(masks_gt) > 0:
             segmentations = np.array(segmentations)
             min_scores = np.min(segmentations)
@@ -523,7 +539,8 @@ class GLASS(torch.nn.Module):
             pixel_auroc = -1.
             pixel_ap = -1.
             pixel_pro = -1.
-            return image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro
+            f1 = -1.
+            return image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro,f1,recall,precision
 
         defects = np.array(images)
         targets = np.array(masks_gt)
@@ -542,8 +559,20 @@ class GLASS(torch.nn.Module):
             utils.del_remake_dir(full_path, del_flag=False)
             cv2.imwrite(full_path + str(i + 1).zfill(3) + '.png', img_up)
 
-        return image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro
-
+        return image_auroc, image_ap, pixel_auroc, pixel_ap, pixel_pro,f1,recall,precision
+    def predict_image(self, image):
+        transform_img = [
+            transforms.Resize(228),
+            transforms.CenterCrop(228),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+        transform_img = transforms.Compose(transform_img)
+        image = transform_img(image)
+        image = image.unsqueeze(0)
+        _scores, _masks = self._predict(image)
+        return _scores, _masks
+        
     def predict(self, test_dataloader):
         """This function provides anomaly scores/maps for full dataloaders."""
         self.forward_modules.eval()
@@ -570,7 +599,7 @@ class GLASS(torch.nn.Module):
                     masks.append(mask)
 
         return images, scores, masks, labels_gt, masks_gt
-
+    
     def _predict(self, img):
         """Infer score and mask for a batch of images."""
         img = img.to(torch.float).to(self.device)

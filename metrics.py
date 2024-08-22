@@ -28,7 +28,23 @@ def compute_imagewise_retrieval_metrics(anomaly_prediction_weights, anomaly_grou
     """
     auroc = metrics.roc_auc_score(anomaly_ground_truth_labels, anomaly_prediction_weights)
     ap = 0. if path == 'training' else metrics.average_precision_score(anomaly_ground_truth_labels, anomaly_prediction_weights)
-    return {"auroc": auroc, "ap": ap}
+    # 計算 Precision 和 Recall
+    precision, recall, thresholds = metrics.precision_recall_curve(anomaly_ground_truth_labels, anomaly_prediction_weights)
+    
+    # 選擇一個合適的閾值來計算F1
+    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-10)
+    max_f1_index = np.argmax(f1_scores)
+    best_threshold = thresholds[max_f1_index] if len(thresholds) > 0 else 0.5  # 確保有閾值存在
+    
+    f1 = f1_scores[max_f1_index]
+    f1 = 0. if path == 'training' else f1
+    precision = 0. if path == 'training' else precision
+    recall = 0. if path == 'training' else recall
+    # 返回對應的 Precision 和 Recall
+    best_precision = 0. if path == 'training' else precision[max_f1_index]
+    best_recall = 0. if path == 'training' else recall[max_f1_index]
+    
+    return {"auroc": auroc, "ap": ap,"f1": f1,"precision":best_precision,"recall":best_recall,"best_threshold": best_threshold}
 
 
 def compute_pixelwise_retrieval_metrics(anomaly_segmentations, ground_truth_masks, path='train'):

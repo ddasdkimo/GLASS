@@ -165,7 +165,7 @@ def dataset(
         augment,
 ):
     _DATASETS = {"mvtec": ["datasets.mvtec", "MVTecDataset"], "visa": ["datasets.visa", "VisADataset"],
-                 "mpdd": ["datasets.mvtec", "MVTecDataset"], "wfdd": ["datasets.mvtec", "MVTecDataset"], }
+                 "mpdd": ["datasets.mvtec", "MVTecDataset"], "wfdd": ["datasets.mvtec", "MVTecDataset"],"rai": ["datasets.mvtec", "MVTecDataset"] }
     dataset_info = _DATASETS[name]
     dataset_library = __import__(dataset_info[0], fromlist=[dataset_info[1]])
 
@@ -302,7 +302,7 @@ def run(
                     df = df.append(row_dist, ignore_index=True)
 
             if type(flag) != int:
-                i_auroc, i_ap, p_auroc, p_ap, p_pro, epoch = GLASS.tester(dataloaders["testing"], dataset_name)
+                i_auroc, i_ap, p_auroc, p_ap, p_pro, epoch,f1,recall,precision = GLASS.tester(dataloaders["testing"], dataset_name)
                 result_collect.append(
                     {
                         "dataset_name": dataset_name,
